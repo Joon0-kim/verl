@@ -363,13 +363,12 @@ class LanguageConfusionCalculator:
                 'expected_language': expected_language,
                 'language_name': self.SUPPORTED_LANGUAGES[expected_language],
                 'total_lines_analyzed': metrics['total_lines'],
-                'language_confusion_score': 1 - metrics['line_pass_rate'],
                 'overall_accuracy': metrics['line_accuracy'],
                 'language_confidence': metrics['language_confidence'],
                 'line_pass_rate': metrics['line_pass_rate'],
-                'word_pass_rate': metrics['word_pass_rate'],
-                'pass_rate_score': self.calculate_pass_rate_score(metrics, expected_language),
-                'lcpr_score': self.calculate_lcpr_score(metrics, expected_language)
+                'lcpr_score': self.calculate_lcpr_score(metrics, expected_language),
+                'binary_harmonic_score': self.calculate_binary_harmonic_score(metrics, expected_language),
+                'binary_line_pass_score': self.calculate_binary_line_pass_score(metrics, expected_language)
             }
         }
     
@@ -398,11 +397,9 @@ class LanguageConfusionCalculator:
         return {
             'metrics': metrics,
             'line_pass_rate': metrics['line_pass_rate'],
-            'word_pass_rate': metrics['word_pass_rate'],
-            'pass_rate_score': self.calculate_pass_rate_score(metrics, expected_language),
             'lcpr_score': self.calculate_lcpr_score(metrics, expected_language),
             'binary_harmonic_score': self.calculate_binary_harmonic_score(metrics, expected_language),
-            'language_confusion_score': 1 - metrics['line_pass_rate']  # 기존 스코어
+            'binary_line_pass_score': self.calculate_binary_line_pass_score(metrics, expected_language)
         }
     
     def calculate_lcpr_score(self, metrics: Dict[str, float], expected_language: str) -> float:
@@ -463,10 +460,27 @@ class LanguageConfusionCalculator:
         else:
             # CJK가 아닌 언어는 LPR만 사용
             return 1.0 if line_pass_rate >= 1.0 else 0.0
+    
+    def calculate_binary_line_pass_score(self, metrics: Dict[str, float], expected_language: str) -> float:
+        """
+        line_pass_rate 기반 binary 스코어를 계산합니다.
+        line_pass_rate가 1이면 1점, 1보다 작으면 0점
+        
+        Args:
+            metrics: calculate_language_confusion에서 반환된 메트릭
+            expected_language: 예상되는 언어
+            
+        Returns:
+            Binary 스코어 (0.0 또는 1.0)
+        """
+        line_pass_rate = metrics['line_pass_rate']
+        
+        # line_pass_rate가 1.0이면 1점, 그렇지 않으면 0점
+        return 1.0 if line_pass_rate >= 1.0 else 0.0
 
 
-def compute_score(predict_str: str, extra_info, score_type: str = 'pass_rate_score') -> float:
-    """최적화된 compute_score 함수 - 다양한 점수 타입 지원"""
+def compute_score(predict_str: str, extra_info, score_type: str = 'line_pass_rate') -> float:
+    """최적화된 compute_score 함수 - 최종 스코어 후보군 4가지 지원"""
     calculator = get_calculator_instance()
     
     # 상세 분석 대신 직접 메트릭 계산
@@ -474,13 +488,11 @@ def compute_score(predict_str: str, extra_info, score_type: str = 'pass_rate_sco
     
     if score_type == 'line_pass_rate':
         return metrics['line_pass_rate']
-    elif score_type == 'word_pass_rate':
-        return metrics['word_pass_rate'] if metrics['word_pass_rate'] is not None else 0.0
     elif score_type == 'lcpr_score':
         return calculator.calculate_lcpr_score(metrics, extra_info['language'])
     elif score_type == 'binary_harmonic_score':
         return calculator.calculate_binary_harmonic_score(metrics, extra_info['language'])
-    elif score_type == 'language_confusion_score':
-        return 1 - metrics['line_pass_rate']  # 기존 스코어 (높을수록 혼동이 심함)
-    else:  # 기본값: pass_rate_score
-        return calculator.calculate_pass_rate_score(metrics, extra_info['language'])
+    elif score_type == 'binary_line_pass_score':
+        return calculator.calculate_binary_line_pass_score(metrics, extra_info['language'])
+    else:  # 기본값: line_pass_rate
+        return metrics['line_pass_rate']
