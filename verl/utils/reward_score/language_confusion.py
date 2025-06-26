@@ -366,9 +366,10 @@ class LanguageConfusionCalculator:
                 'language_confusion_score': 1 - metrics['line_pass_rate'],
                 'overall_accuracy': metrics['line_accuracy'],
                 'language_confidence': metrics['language_confidence'],
-                'comprehensive_score': self.calculate_comprehensive_score(metrics, expected_language),
-                'simple_comprehensive_score': self.calculate_simple_comprehensive_score(metrics),
-                'max_comprehensive_score': self.calculate_max_comprehensive_score(metrics)
+                'line_pass_rate': metrics['line_pass_rate'],
+                'word_pass_rate': metrics['word_pass_rate'],
+                'pass_rate_score': self.calculate_pass_rate_score(metrics, expected_language),
+                'lcpr_score': self.calculate_lcpr_score(metrics, expected_language)
             }
         }
     
@@ -380,134 +381,6 @@ class LanguageConfusionCalculator:
             언어 코드와 언어명 딕셔너리
         """
         return self.SUPPORTED_LANGUAGES.copy()
-    
-    def calculate_comprehensive_score(self, metrics: Dict[str, float], expected_language: str) -> float:
-        """
-        가중 평균 기반 종합 언어 혼동 스코어를 계산합니다.
-        
-        Args:
-            metrics: calculate_language_confusion에서 반환된 메트릭
-            expected_language: 예상되는 언어
-            
-        Returns:
-            종합 스코어 (0.0 ~ 1.0, 높을수록 혼동이 심함)
-        """
-        # 기본 가중치
-        weights = {
-            'line_accuracy': 0.4,      # 라인별 정확도 (가장 중요)
-            'language_confidence': 0.3, # 언어 신뢰도
-            'line_pass_rate': 0.2,     # 라인 패스율
-            'word_pass_rate': 0.1      # 단어 패스율 (CJK 언어에서만)
-        }
-        
-        # CJK 언어가 아닌 경우 word_pass_rate 가중치를 다른 항목에 재분배
-        if expected_language not in self.CJK_LANGUAGES or metrics['word_pass_rate'] is None:
-            weights['line_accuracy'] += weights['word_pass_rate'] * 0.6
-            weights['language_confidence'] += weights['word_pass_rate'] * 0.4
-            weights['word_pass_rate'] = 0.0
-        
-        # 종합 스코어 계산 (혼동이 심할수록 높은 값)
-        comprehensive_score = (
-            (1 - metrics['line_accuracy']) * weights['line_accuracy'] +
-            (1 - metrics['language_confidence']) * weights['language_confidence'] +
-            (1 - metrics['line_pass_rate']) * weights['line_pass_rate'] +
-            (0 if metrics['word_pass_rate'] is None else (1 - metrics['word_pass_rate'])) * weights['word_pass_rate']
-        )
-        
-        return comprehensive_score
-    
-    def calculate_simple_comprehensive_score(self, metrics: Dict[str, float]) -> float:
-        """
-        단순 평균 기반 종합 스코어를 계산합니다.
-        
-        Args:
-            metrics: calculate_language_confusion에서 반환된 메트릭
-            
-        Returns:
-            종합 스코어 (0.0 ~ 1.0, 높을수록 혼동이 심함)
-        """
-        scores = [
-            1 - metrics['line_accuracy'],
-            1 - metrics['language_confidence'],
-            1 - metrics['line_pass_rate']
-        ]
-        
-        if metrics['word_pass_rate'] is not None:
-            scores.append(1 - metrics['word_pass_rate'])
-        
-        return sum(scores) / len(scores)
-    
-    def calculate_max_comprehensive_score(self, metrics: Dict[str, float]) -> float:
-        """
-        최대값 기반 종합 스코어를 계산합니다 (가장 심한 혼동을 반영).
-        
-        Args:
-            metrics: calculate_language_confusion에서 반환된 메트릭
-            
-        Returns:
-            종합 스코어 (0.0 ~ 1.0, 높을수록 혼동이 심함)
-        """
-        scores = [
-            1 - metrics['line_accuracy'],
-            1 - metrics['language_confidence'],
-            1 - metrics['line_pass_rate']
-        ]
-        
-        if metrics['word_pass_rate'] is not None:
-            scores.append(1 - metrics['word_pass_rate'])
-        
-        return max(scores)
-    
-    def calculate_pass_rate_score(self, metrics: Dict[str, float], expected_language: str) -> float:
-        """
-        line_pass_rate와 word_pass_rate의 조합으로 언어 혼동 점수를 계산합니다.
-        
-        Args:
-            metrics: calculate_language_confusion에서 반환된 메트릭
-            expected_language: 예상되는 언어
-            
-        Returns:
-            패스율 기반 스코어 (0.0 ~ 1.0, 높을수록 좋음)
-        """
-        line_pass_rate = metrics['line_pass_rate']
-        
-        # CJK 언어의 경우 word_pass_rate도 고려
-        if expected_language in self.CJK_LANGUAGES and metrics['word_pass_rate'] is not None:
-            word_pass_rate = metrics['word_pass_rate']
-            # line_pass_rate에 더 높은 가중치를 주고, word_pass_rate도 고려
-            return 0.7 * line_pass_rate + 0.3 * word_pass_rate
-        else:
-            # CJK가 아닌 언어는 line_pass_rate만 사용
-            return line_pass_rate
-    
-    def calculate_lcpr_score(self, metrics: Dict[str, float], expected_language: str) -> float:
-        """
-        LCPR (Language Consistency Pass Rate) 점수를 계산합니다.
-        2 × 조화평균(WPR, LPR) 공식 사용
-        
-        Args:
-            metrics: calculate_language_confusion에서 반환된 메트릭
-            expected_language: 예상되는 언어
-            
-        Returns:
-            LCPR 스코어 (0.0 ~ 1.0, 높을수록 좋음)
-        """
-        line_pass_rate = metrics['line_pass_rate']
-        
-        # CJK 언어의 경우 WPR과 LPR의 조화평균 계산
-        if expected_language in self.CJK_LANGUAGES and metrics['word_pass_rate'] is not None:
-            word_pass_rate = metrics['word_pass_rate']
-            
-            # 조화평균 계산: 2 / (1/a + 1/b)
-            if line_pass_rate > 0 and word_pass_rate > 0:
-                harmonic_mean = 2 / (1/line_pass_rate + 1/word_pass_rate)
-                return harmonic_mean
-            else:
-                # 둘 중 하나라도 0이면 0 반환
-                return 0.0
-        else:
-            # CJK가 아닌 언어는 LPR만 사용 (WPR이 없으므로)
-            return line_pass_rate
     
     def calculate_all_scores(self, response: str, expected_language: str) -> Dict[str, float]:
         """
@@ -524,32 +397,28 @@ class LanguageConfusionCalculator:
         
         return {
             'metrics': metrics,
+            'line_pass_rate': metrics['line_pass_rate'],
+            'word_pass_rate': metrics['word_pass_rate'],
             'pass_rate_score': self.calculate_pass_rate_score(metrics, expected_language),
-            'comprehensive_score': self.calculate_comprehensive_score(metrics, expected_language),
-            'simple_comprehensive_score': self.calculate_simple_comprehensive_score(metrics),
-            'max_comprehensive_score': self.calculate_max_comprehensive_score(metrics),
-            'language_confusion_score': 1 - metrics['line_pass_rate'],  # 기존 스코어
-            'lcpr_score': self.calculate_lcpr_score(metrics, expected_language)
+            'lcpr_score': self.calculate_lcpr_score(metrics, expected_language),
+            'language_confusion_score': 1 - metrics['line_pass_rate']  # 기존 스코어
         }
 
 
-def compute_score(predict_str: str, extra_info) -> float:
+def compute_score(predict_str: str, extra_info, score_type: str = 'pass_rate_score') -> float:
     """최적화된 compute_score 함수 - 다양한 점수 타입 지원"""
     calculator = get_calculator_instance()
     
     # 상세 분석 대신 직접 메트릭 계산
     metrics = calculator.calculate_language_confusion(predict_str, extra_info['language'])
     
-    # 점수 타입 선택 (기본값: pass_rate_score)
-    score_type = extra_info.get('score_type', 'pass_rate_score')
-    
-    if score_type == 'lcpr_score':
+    if score_type == 'line_pass_rate':
+        return metrics['line_pass_rate']
+    elif score_type == 'word_pass_rate':
+        return metrics['word_pass_rate'] if metrics['word_pass_rate'] is not None else 0.0
+    elif score_type == 'lcpr_score':
         return calculator.calculate_lcpr_score(metrics, extra_info['language'])
-    elif score_type == 'comprehensive_score':
-        return calculator.calculate_comprehensive_score(metrics, extra_info['language'])
-    elif score_type == 'simple_comprehensive_score':
-        return calculator.calculate_simple_comprehensive_score(metrics)
-    elif score_type == 'max_comprehensive_score':
-        return calculator.calculate_max_comprehensive_score(metrics)
+    elif score_type == 'language_confusion_score':
+        return 1 - metrics['line_pass_rate']  # 기존 스코어 (높을수록 혼동이 심함)
     else:  # 기본값: pass_rate_score
         return calculator.calculate_pass_rate_score(metrics, extra_info['language'])
