@@ -480,6 +480,35 @@ class LanguageConfusionCalculator:
             # CJK가 아닌 언어는 line_pass_rate만 사용
             return line_pass_rate
     
+    def calculate_lcpr_score(self, metrics: Dict[str, float], expected_language: str) -> float:
+        """
+        LCPR (Language Consistency Pass Rate) 점수를 계산합니다.
+        2 × 조화평균(WPR, LPR) 공식 사용
+        
+        Args:
+            metrics: calculate_language_confusion에서 반환된 메트릭
+            expected_language: 예상되는 언어
+            
+        Returns:
+            LCPR 스코어 (0.0 ~ 1.0, 높을수록 좋음)
+        """
+        line_pass_rate = metrics['line_pass_rate']
+        
+        # CJK 언어의 경우 WPR과 LPR의 조화평균 계산
+        if expected_language in self.CJK_LANGUAGES and metrics['word_pass_rate'] is not None:
+            word_pass_rate = metrics['word_pass_rate']
+            
+            # 조화평균 계산: 2 / (1/a + 1/b)
+            if line_pass_rate > 0 and word_pass_rate > 0:
+                harmonic_mean = 2 / (1/line_pass_rate + 1/word_pass_rate)
+                return harmonic_mean
+            else:
+                # 둘 중 하나라도 0이면 0 반환
+                return 0.0
+        else:
+            # CJK가 아닌 언어는 LPR만 사용 (WPR이 없으므로)
+            return line_pass_rate
+    
     def calculate_all_scores(self, response: str, expected_language: str) -> Dict[str, float]:
         """
         모든 종합 스코어를 한 번에 계산합니다.
@@ -499,16 +528,28 @@ class LanguageConfusionCalculator:
             'comprehensive_score': self.calculate_comprehensive_score(metrics, expected_language),
             'simple_comprehensive_score': self.calculate_simple_comprehensive_score(metrics),
             'max_comprehensive_score': self.calculate_max_comprehensive_score(metrics),
-            'language_confusion_score': 1 - metrics['line_pass_rate']  # 기존 스코어
+            'language_confusion_score': 1 - metrics['line_pass_rate'],  # 기존 스코어
+            'lcpr_score': self.calculate_lcpr_score(metrics, expected_language)
         }
 
 
 def compute_score(predict_str: str, extra_info) -> float:
-    """최적화된 compute_score 함수 - pass_rate_score 사용"""
+    """최적화된 compute_score 함수 - 다양한 점수 타입 지원"""
     calculator = get_calculator_instance()
     
     # 상세 분석 대신 직접 메트릭 계산
     metrics = calculator.calculate_language_confusion(predict_str, extra_info['language'])
-    pass_rate_score = calculator.calculate_pass_rate_score(metrics, extra_info['language'])
     
-    return pass_rate_score
+    # 점수 타입 선택 (기본값: pass_rate_score)
+    score_type = extra_info.get('score_type', 'pass_rate_score')
+    
+    if score_type == 'lcpr_score':
+        return calculator.calculate_lcpr_score(metrics, extra_info['language'])
+    elif score_type == 'comprehensive_score':
+        return calculator.calculate_comprehensive_score(metrics, extra_info['language'])
+    elif score_type == 'simple_comprehensive_score':
+        return calculator.calculate_simple_comprehensive_score(metrics)
+    elif score_type == 'max_comprehensive_score':
+        return calculator.calculate_max_comprehensive_score(metrics)
+    else:  # 기본값: pass_rate_score
+        return calculator.calculate_pass_rate_score(metrics, extra_info['language'])
