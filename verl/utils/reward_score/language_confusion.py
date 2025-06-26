@@ -401,8 +401,68 @@ class LanguageConfusionCalculator:
             'word_pass_rate': metrics['word_pass_rate'],
             'pass_rate_score': self.calculate_pass_rate_score(metrics, expected_language),
             'lcpr_score': self.calculate_lcpr_score(metrics, expected_language),
+            'binary_harmonic_score': self.calculate_binary_harmonic_score(metrics, expected_language),
             'language_confusion_score': 1 - metrics['line_pass_rate']  # 기존 스코어
         }
+    
+    def calculate_lcpr_score(self, metrics: Dict[str, float], expected_language: str) -> float:
+        """
+        LCPR (Language Consistency Pass Rate) 점수를 계산합니다.
+        2 × 조화평균(WPR, LPR) 공식 사용
+        
+        Args:
+            metrics: calculate_language_confusion에서 반환된 메트릭
+            expected_language: 예상되는 언어
+            
+        Returns:
+            LCPR 스코어 (0.0 ~ 1.0, 높을수록 좋음)
+        """
+        line_pass_rate = metrics['line_pass_rate']
+        
+        # CJK 언어의 경우 WPR과 LPR의 조화평균 계산
+        if expected_language in self.CJK_LANGUAGES and metrics['word_pass_rate'] is not None:
+            word_pass_rate = metrics['word_pass_rate']
+            
+            # 조화평균 계산: 2 / (1/a + 1/b)
+            if line_pass_rate > 0 and word_pass_rate > 0:
+                harmonic_mean = 2 / (1/line_pass_rate + 1/word_pass_rate)
+                return harmonic_mean
+            else:
+                # 둘 중 하나라도 0이면 0 반환
+                return 0.0
+        else:
+            # CJK가 아닌 언어는 LPR만 사용 (WPR이 없으므로)
+            return line_pass_rate
+    
+    def calculate_binary_harmonic_score(self, metrics: Dict[str, float], expected_language: str) -> float:
+        """
+        조화평균 기반 binary 스코어를 계산합니다.
+        조화평균이 1이면 1점, 1보다 작으면 0점
+        
+        Args:
+            metrics: calculate_language_confusion에서 반환된 메트릭
+            expected_language: 예상되는 언어
+            
+        Returns:
+            Binary 스코어 (0.0 또는 1.0)
+        """
+        line_pass_rate = metrics['line_pass_rate']
+        
+        # CJK 언어의 경우 WPR과 LPR의 조화평균 계산
+        if expected_language in self.CJK_LANGUAGES and metrics['word_pass_rate'] is not None:
+            word_pass_rate = metrics['word_pass_rate']
+            
+            # 조화평균 계산: 2 / (1/a + 1/b)
+            if line_pass_rate > 0 and word_pass_rate > 0:
+                harmonic_mean = 2 / (1/line_pass_rate + 1/word_pass_rate)
+                # 조화평균이 1이면 1점, 1보다 작으면 0점
+                return 1.0 if harmonic_mean >= 1.0 else 0.0
+            else:
+                # 둘 중 하나라도 0이면 0 반환
+                return 0.0
+        else:
+            # CJK가 아닌 언어는 LPR만 사용
+            return 1.0 if line_pass_rate >= 1.0 else 0.0
 
 
 def compute_score(predict_str: str, extra_info, score_type: str = 'pass_rate_score') -> float:
@@ -418,6 +478,8 @@ def compute_score(predict_str: str, extra_info, score_type: str = 'pass_rate_sco
         return metrics['word_pass_rate'] if metrics['word_pass_rate'] is not None else 0.0
     elif score_type == 'lcpr_score':
         return calculator.calculate_lcpr_score(metrics, extra_info['language'])
+    elif score_type == 'binary_harmonic_score':
+        return calculator.calculate_binary_harmonic_score(metrics, extra_info['language'])
     elif score_type == 'language_confusion_score':
         return 1 - metrics['line_pass_rate']  # 기존 스코어 (높을수록 혼동이 심함)
     else:  # 기본값: pass_rate_score
