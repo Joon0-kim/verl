@@ -2,6 +2,9 @@ import re
 import subprocess
 import tempfile
 import os
+import uuid
+import threading
+from contextlib import contextmanager
 
 
 def extract_python_code(text):
@@ -19,6 +22,50 @@ def extract_python_code(text):
     return sorted(code_blocks, key=len)[-1] if code_blocks else None
 
 
+@contextmanager
+def create_temp_code_file(code):
+    """Thread-safe temporary file creation with automatic cleanup."""
+    # Create unique filename to avoid conflicts
+    unique_id = str(uuid.uuid4())
+    temp_file_path = os.path.join(tempfile.gettempdir(), f"code_exec_{unique_id}.py")
+    
+    try:
+        # Write code to temporary file
+        with open(temp_file_path, 'w', encoding='utf-8') as f:
+            f.write(code)
+        yield temp_file_path
+    finally:
+        # Clean up temporary file
+        try:
+            if os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+        except OSError:
+            pass  # File might already be deleted
+
+
+def evaluate_single_test_case(temp_file_path, test_case, timeout):
+    """Evaluate a single test case with proper error handling."""
+    try:
+        process = subprocess.run(
+            ["python3", temp_file_path],
+            input=test_case["input"],
+            text=True,
+            capture_output=True,
+            timeout=timeout
+        )
+        
+        if process.returncode != 0:
+            return False
+        
+        output = process.stdout.strip()
+        expected_output = test_case["output"].strip()
+        
+        return output == expected_output
+        
+    except (subprocess.TimeoutExpired, Exception):
+        return False
+
+
 def accuracy_reward_code_code_open_r1(content, extra_info):
     test_cases = extra_info["testcases"]
     single_timeout = 2.0
@@ -31,45 +78,11 @@ def accuracy_reward_code_code_open_r1(content, extra_info):
         passed = 0
         total = len(test_cases)
         
-        # Create a temporary file to avoid repeated subprocess overhead
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as temp_file:
-            temp_file.write(code)
-            temp_file_path = temp_file.name
-        
-        try:
+        # Use context manager for thread-safe file handling
+        with create_temp_code_file(code) as temp_file_path:
             for test_case in test_cases:
-                try: 
-                    process = subprocess.run(
-                        ["python3", temp_file_path],
-                        input=test_case["input"],
-                        text=True,
-                        capture_output=True,
-                        timeout=single_timeout 
-                    )
-        
-                    if process.returncode != 0:  # 실행 오류
-                        continue  # 다음 테스트케이스로 진행
-        
-                    output = process.stdout.strip()
-                    expected_output = test_case["output"].strip()
-        
-                    # 전체 출력 비교 (더 효율적)
-                    if output == expected_output:
-                        passed += 1
-        
-                except subprocess.TimeoutExpired:
-                    # 현재 테스트 케이스가 시간 초과한 경우
-                    continue  # 다음 테스트케이스로 진행
-                except Exception:
-                    # 기타 예외 처리
-                    continue
-        
-        finally:
-            # 임시 파일 정리
-            try:
-                os.unlink(temp_file_path)
-            except OSError:
-                pass  # 파일이 이미 삭제되었거나 삭제할 수 없는 경우
+                if evaluate_single_test_case(temp_file_path, test_case, single_timeout):
+                    passed += 1
         
         success_rate = (passed / total) if total > 0 else 0.0
         return success_rate
